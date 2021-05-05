@@ -2,12 +2,12 @@ import os
 import sys
 
 import ray
+from griddly.util.rllib.torch.agents.impala_cnn import ImpalaCNNAgent
 from ray import tune
 from ray.rllib.models import ModelCatalog
 from ray.tune.integration.wandb import WandbLoggerCallback
 from ray.tune.registry import register_env
 
-from rts.models import ImpalaCNNAgent
 from griddly import gd
 from griddly.util.rllib.callbacks import MultiCallback, VideoCallback, ActionTrackerCallback
 from griddly.util.rllib.environment.core import RLlibMultiAgentWrapper, RLlibEnv
@@ -52,13 +52,13 @@ if __name__ == '__main__':
     else:
         ray.init(include_dashboard=False, num_gpus=args.num_gpus, num_cpus=args.num_cpus)
 
-
     env_name = "griddly-rts-env"
 
 
     def _create_env(env_config):
         env = RLlibEnv(env_config)
         return RLlibMultiAgentWrapper(env, env_config)
+
 
     register_env(env_name, _create_env)
     ModelCatalog.register_custom_model("ImpalaCNN", ImpalaCNNAgent)
