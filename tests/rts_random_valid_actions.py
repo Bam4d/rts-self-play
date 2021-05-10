@@ -45,31 +45,35 @@ if __name__ == '__main__':
     wrapper = GymWrapperFactory()
 
     wrapper.build_gym_from_yaml("GriddlyRTS-Adv",
-                                'griddly_rts.yaml',
+                                'RTS/GriddlyRTS.yaml',
                                 global_observer_type=gd.ObserverType.ISOMETRIC,
                                 player_observer_type=gd.ObserverType.VECTOR,
-                                level=0)
+                                level=0, max_steps=1000)
 
-    env_original = gym.make(f'GDY-GriddlyRTS-Adv-v0')
+    env = gym.make(f'GDY-GriddlyRTS-Adv-v0')
     # env_original = gym.make(f'GDY-GriddlyRTS-Adv-v0')
 
-    env_original.reset()
-    env_original.enable_history()
+    env.reset()
+    env.enable_history()
 
-    env = ValidActionSpaceWrapper(env_original)
+    env = ValidActionSpaceWrapper(env)
 
-    event_tracker = EventFrequencyTracker(10)
+    #event_tracker = EventFrequencyTracker(10)
 
     renderer = RenderToFile()
 
-    for i in range(100000):
+    for i in range(100000000):
         action = env.action_space.sample()
+
+        tree = env.game.build_valid_action_trees()
 
         obs, reward, done, info = env.step(action)
 
-        event_tracker.process(info['History'])
+        #event_tracker.process(info['History'])
 
-        global_obs = env.render(observer='global', mode='rgb_array')
+        env.render(observer='global')
+
+        #global_obs = env.render(observer='global', mode='rgb_array')
 
         #renderer.render(global_obs, 'rts_.png')
 
