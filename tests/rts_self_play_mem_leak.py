@@ -1,6 +1,10 @@
 import argparse
 import os
+import torch
 import sys
+import gc
+import resource
+import os
 import tracemalloc
 from email.policy import Policy
 from typing import Optional, Dict
@@ -52,13 +56,14 @@ class TraceMallocCallback(DefaultCallbacks):
         super().__init__()
 
         tracemalloc.start(10)
+        self._episode_count = 0
 
     def on_episode_end(self, *, worker: "RolloutWorker", base_env: BaseEnv, policies: Dict[PolicyID, Policy],
                        episode: MultiAgentEpisode, env_index: Optional[int] = None, **kwargs) -> None:
         snapshot = tracemalloc.take_snapshot()
         top_stats = snapshot.statistics('traceback')
 
-        for stat in top_stats[:5]:
+        for stat in top_stats[:10]:
             count = stat.count
             size = stat.size
 
@@ -67,12 +72,26 @@ class TraceMallocCallback(DefaultCallbacks):
             episode.custom_metrics[f'tracemalloc/{trace}/size'] = size
             episode.custom_metrics[f'tracemalloc/{trace}/count'] = count
 
+        episode.custom_metrics[f'tracemalloc/cuda/alloc'] = torch.cuda.memory_allocated()
+        episode.custom_metrics[f'tracemalloc/cuda/max_alloc'] = torch.cuda.max_memory_allocated()
+
+        self._episode_count += 1
+
+        if self._episode_count % 1000 == 0:
+            gc.collect()
+            torch.cuda.empty_cache()
+
 if __name__ == '__main__':
 
     args = parser.parse_args()
 
     sep = os.pathsep
     os.environ['PYTHONPATH'] = sep.join(sys.path)
+
+    if os.path.isfile('/sys/fs/cgroup/memory/memory.limit_in_bytes'):
+        with open('/sys/fs/cgroup/memory/memory.limit_in_bytes') as limit:
+            mem = int(limit.read())
+            resource.setrlimit(resource.RLIMIT_AS, (mem, mem))
 
     if args.debug:
         ray.init(include_dashboard=False, num_gpus=args.num_gpus, num_cpus=args.num_cpus, local_mode=True)
@@ -91,7 +110,7 @@ if __name__ == '__main__':
     ModelCatalog.register_custom_model("ImpalaCNN", ImpalaCNNAgent)
 
     wandbLoggerCallback = WandbLoggerCallback(
-        project='rts_experiments',
+        project='rts_experiments_leak',
         api_key_file='~/.wandb_rc',
         dir=args.root_directory
     )
@@ -110,7 +129,8 @@ if __name__ == '__main__':
 
         'callbacks': MultiCallback([
             VideoCallback,
-            ActionTrackerCallback
+            ActionTrackerCallback,
+            TraceMallocCallback
         ]),
 
         'model': {
