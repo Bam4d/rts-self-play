@@ -1,24 +1,22 @@
+import argparse
 import os
 import sys
 
-import torch
-from griddly.util.rllib.torch.agents.common import layer_init
-from torch import nn
 import ray
+from griddly import gd
+from griddly.util.rllib.callbacks import VideoCallbacks, ActionTrackerCallbacks
+from griddly.util.rllib.environment.core import RLlibMultiAgentWrapper, RLlibEnv
+from griddly.util.rllib.torch.agents.common import layer_init
 from griddly.util.rllib.torch.agents.impala_cnn import ImpalaCNNAgent, ConvSequence
+from griddly.util.rllib.torch.conditional_actions.conditional_action_policy_trainer import \
+    ConditionalActionImpalaTrainer
 from ray import tune
+from ray.rllib.agents.callbacks import MultiCallbacks
 from ray.rllib.models import ModelCatalog
 from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
 from ray.tune.integration.wandb import WandbLoggerCallback
 from ray.tune.registry import register_env
-
-from griddly import gd
-from griddly.util.rllib.callbacks import MultiCallback, VideoCallback, ActionTrackerCallback
-from griddly.util.rllib.environment.core import RLlibMultiAgentWrapper, RLlibEnv
-from griddly.util.rllib.torch.conditional_actions.conditional_action_policy_trainer import \
-    ConditionalActionImpalaTrainer
-
-import argparse
+from torch import nn
 
 parser = argparse.ArgumentParser(description='Run experiments')
 
@@ -43,6 +41,7 @@ parser.add_argument('--video-frequency', type=int, default=1000000, help='Freque
 parser.add_argument('--seed', type=int, default=1, help='seed for experiments')
 
 parser.add_argument('--lr', type=float, default=0.0005, help='learning rate')
+
 
 class ImpalaCNNAgentBigger(TorchModelV2, nn.Module):
     """
@@ -80,6 +79,7 @@ class ImpalaCNNAgentBigger(TorchModelV2, nn.Module):
 
     def value_function(self):
         return self._value
+
 
 if __name__ == '__main__':
 
@@ -122,9 +122,9 @@ if __name__ == '__main__':
 
         'train_batch_size': args.train_batch_size,
 
-        'callbacks': MultiCallback([
-            VideoCallback,
-            ActionTrackerCallback
+        'callbacks': MultiCallbacks([
+            VideoCallbacks,
+            ActionTrackerCallbacks
         ]),
 
         'model': {
@@ -134,13 +134,14 @@ if __name__ == '__main__':
         'env': env_name,
         'env_config': {
             'generate_valid_action_trees': True,
+            'invalid_action_masking': 'conditional',
             'yaml_file': args.yaml_file,
             'global_observer_type': gd.ObserverType.ISOMETRIC,
             'level': 0,
             'record_actions': True,
             'max_steps': 1000,
         },
-        'entropy_coeff': tune.grid_search([0.0005,0.001,0.002,0.005]),
+        'entropy_coeff': tune.grid_search([0.0005, 0.001, 0.002, 0.005]),
         'lr': tune.grid_search([0.0005, 0.0002, 0.0001, 0.00005])
         # 'entropy_coeff_schedule': [
         #     [0, 0.001],
