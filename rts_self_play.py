@@ -4,19 +4,18 @@ import sys
 
 import ray
 from griddly import gd
-from griddly.util.rllib.callbacks import VideoCallbacks, ActionTrackerCallbacks
+from griddly.util.rllib.callbacks import VideoCallbacks, ActionTrackerCallbacks, WinLoseMetricCallbacks
 from griddly.util.rllib.environment.core import RLlibMultiAgentWrapper, RLlibEnv
-from griddly.util.rllib.torch.agents.common import layer_init
-from griddly.util.rllib.torch.agents.impala_cnn import ImpalaCNNAgent, ConvSequence
-from griddly.util.rllib.torch.conditional_actions.conditional_action_policy_trainer import \
-    ConditionalActionImpalaTrainer
 from ray import tune
 from ray.rllib.agents.callbacks import MultiCallbacks
 from ray.rllib.models import ModelCatalog
-from ray.rllib.models.torch.torch_modelv2 import TorchModelV2
 from ray.tune.integration.wandb import WandbLoggerCallback
 from ray.tune.registry import register_env
-from torch import nn
+
+from autocats.torch.auto_cat_trainer import AutoCATTrainer
+from autocats.torch.models.ma_separate import MASeparate
+from autocats.torch.multi_action_model import MultiActionAutoregressiveModel
+from autocats.wrappers.multi_action_env import MultiActionEnv
 
 parser = argparse.ArgumentParser(description='Run experiments')
 
@@ -37,48 +36,12 @@ parser.add_argument('--train-batch-size', default=500, type=int, help='Training 
 parser.add_argument('--capture-video', action='store_true', help='enable video capture')
 parser.add_argument('--video-directory', default='videos', help='directory of video')
 parser.add_argument('--video-frequency', type=int, default=1000000, help='Frequency of videos')
+parser.add_argument('--actions-per-step', default=1, type=int, help='Number of actions to produce per time-step')
 
 parser.add_argument('--seed', type=int, default=1, help='seed for experiments')
 
-parser.add_argument('--lr', type=float, default=0.0005, help='learning rate')
-
-
-class ImpalaCNNAgentBigger(TorchModelV2, nn.Module):
-    """
-    Simple Convolution agent that calculates the required linear output layer
-    """
-
-    def __init__(self, obs_space, action_space, num_outputs, model_config, name):
-        super().__init__(obs_space, action_space, num_outputs, model_config, name)
-        nn.Module.__init__(self)
-
-        conv_seqs = []
-        h, w, c = obs_space.shape
-        shape = (c, h, w)
-        for out_channels in [32, 64, 64]:
-            conv_seq = ConvSequence(shape, out_channels)
-            shape = conv_seq.get_output_shape()
-            conv_seqs.append(conv_seq)
-        conv_seqs += [
-            nn.Flatten(),
-            nn.ReLU(),
-            nn.Linear(in_features=shape[0] * shape[1] * shape[2], out_features=1024),
-            nn.ReLU(),
-        ]
-        self.network = nn.Sequential(*conv_seqs)
-        self._actor_head = layer_init(nn.Linear(1024, num_outputs), std=0.01)
-        self._critic_head = layer_init(nn.Linear(1024, 1), std=1)
-
-    def forward(self, input_dict, state, seq_lens):
-        obs_transformed = input_dict['obs'].permute(0, 3, 1, 2)
-        network_output = self.network(obs_transformed)
-        value = self._critic_head(network_output)
-        self._value = value.reshape(-1)
-        logits = self._actor_head(network_output)
-        return logits, state
-
-    def value_function(self):
-        return self._value
+parser.add_argument('--lr', type=float, default=0.001, help='learning rate')
+parser.add_argument('--entropy-coeff', type=float, default=0.01, help='entropy coefficient')
 
 
 if __name__ == '__main__':
@@ -98,11 +61,12 @@ if __name__ == '__main__':
 
     def _create_env(env_config):
         env = RLlibEnv(env_config)
+        env = MultiActionEnv(env, env_config['actions_per_step'])
         return RLlibMultiAgentWrapper(env, env_config)
 
 
     register_env(env_name, _create_env)
-    ModelCatalog.register_custom_model("ImpalaCNN", ImpalaCNNAgent)
+    ModelCatalog.register_custom_model("AutoCat", MASeparate)
 
     wandbLoggerCallback = WandbLoggerCallback(
         project='rts_experiments',
@@ -124,11 +88,12 @@ if __name__ == '__main__':
 
         'callbacks': MultiCallbacks([
             VideoCallbacks,
-            ActionTrackerCallbacks
+            ActionTrackerCallbacks,
+            WinLoseMetricCallbacks
         ]),
 
         'model': {
-            'custom_model': 'ImpalaCNN',
+            'custom_model': 'AutoCat',
             'custom_model_config': {}
         },
         'env': env_name,
@@ -139,18 +104,20 @@ if __name__ == '__main__':
             'global_observer_type': gd.ObserverType.ISOMETRIC,
             'level': 0,
             'record_actions': True,
+            'actions_per_step': args.actions_per_step,
             'max_steps': 1000,
         },
-        'entropy_coeff': tune.grid_search([0.0005, 0.001, 0.002, 0.005]),
-        'lr': tune.grid_search([0.0005, 0.0002, 0.0001, 0.00005])
-        # 'entropy_coeff_schedule': [
-        #     [0, 0.001],
-        #     [max_training_steps, 0.0]
-        # ],
-        # 'lr_schedule': [
-        #     [0, args.lr],
-        #     [max_training_steps, 0.0]
-        # ],
+        'actions_per_step': args.actions_per_step,
+        # 'entropy_coeff': tune.grid_search([0.0005, 0.001, 0.002, 0.005]),
+        # 'lr': tune.grid_search([0.0005, 0.0002, 0.0001, 0.00005])
+        'entropy_coeff_schedule': [
+            [0, args.entropy_coeff],
+            [max_training_steps, 0.0]
+        ],
+        'lr_schedule': [
+            [0, args.lr],
+            [max_training_steps, 0.0]
+        ],
 
     }
 
@@ -168,7 +135,7 @@ if __name__ == '__main__':
     trial_name_creator = lambda trial: f'RTS-self-play'
 
     result = tune.run(
-        ConditionalActionImpalaTrainer,
+        AutoCATTrainer,
         local_dir=args.root_directory,
         config=config,
         stop=stop,
