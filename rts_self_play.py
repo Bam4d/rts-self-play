@@ -6,6 +6,7 @@ import ray
 from griddly import gd
 from griddly.util.rllib.callbacks import VideoCallbacks, ActionTrackerCallbacks, WinLoseMetricCallbacks
 from griddly.util.rllib.environment.core import RLlibMultiAgentWrapper, RLlibEnv
+from griddly.util.rllib.torch.agents.impala_cnn import ImpalaCNNAgent
 from ray import tune
 from ray.rllib.agents.callbacks import MultiCallbacks
 from ray.rllib.models import ModelCatalog
@@ -94,7 +95,10 @@ if __name__ == '__main__':
 
         'model': {
             'custom_model': 'AutoCat',
-            'custom_model_config': {}
+            'custom_model_config': {
+                'observation_features_class': ImpalaCNNAgent,
+                'observation_features_size': 256,
+            }
         },
         'env': env_name,
         'env_config': {
@@ -108,16 +112,17 @@ if __name__ == '__main__':
             'max_steps': 1000,
         },
         'actions_per_step': args.actions_per_step,
-        # 'entropy_coeff': tune.grid_search([0.0005, 0.001, 0.002, 0.005]),
-        # 'lr': tune.grid_search([0.0005, 0.0002, 0.0001, 0.00005])
-        'entropy_coeff_schedule': [
-            [0, args.entropy_coeff],
-            [max_training_steps, 0.0]
-        ],
-        'lr_schedule': [
-            [0, args.lr],
-            [max_training_steps, 0.0]
-        ],
+        'autoregressive_actions': tune.grid_search([False, True]),
+        'entropy_coeff': tune.grid_search([0.05, 0.01, 0.1]),
+        'lr': tune.grid_search([0.0005, 0.0001]),
+        # 'entropy_coeff_schedule': [
+        #     [0, args.entropy_coeff],
+        #     [max_training_steps, 0.0]
+        # ],
+        # 'lr_schedule': [
+        #     [0, args.lr],
+        #     [max_training_steps, 0.0]
+        # ],
 
     }
 
