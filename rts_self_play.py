@@ -89,7 +89,7 @@ if __name__ == '__main__':
         'callbacks': MultiCallbacks([
             VideoCallbacks,
             ActionTrackerCallbacks,
-            WinLoseMetricCallbacks
+            #WinLoseMetricCallbacks
         ]),
 
         'model': {
